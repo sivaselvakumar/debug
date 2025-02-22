@@ -1,3 +1,15 @@
+import torch
+import pandas as pd
+import time
+import math
+import os
+import random
+import argparse
+torch.distributed.init_process_group(backend='nccl' if torch.cuda.is_available() else 'gloo')
+from sentence_transformers import CrossEncoder, InputExample
+from torch.utils.data import DataLoader, DistributedSampler
+from sentence_transformers.cross_encoder.evaluation import CEBinaryClassificationEvaluator
+
 # Function to add slight noise to text
 def add_noise(text, noise_level=0.05):
     words = text.split()
@@ -16,23 +28,83 @@ def load_and_preprocess_data(csv_path):
     df["french"] = df["french"].apply(lambda x: add_noise(x))
     return df
 
-def train_cross_encoder(csv_path, epochs=5, batch_size=32, learning_rate=2e-5, model_folder_name="cross_encoder_model"):
-    df = load_and_preprocess_data(csv_path)
+def train_cross_encoder(csv_filename, precision="default", epochs=1, batch_size=32, learning_rate=2e-5, model_folder_name="cross_encoder_model"):
+    df = load_and_preprocess_data(csv_filename)
     X = list(zip(df["english"], df["french"]))
-    y = [1] * len(X)  # Assume all translations are correct
+    y = [1] * len(X)
     split = int(0.9 * len(X))
     X_train, X_val = X[:split], X[split:]
     y_train, y_val = y[:split], y[split:]
-
-    model = CrossEncoder('google-bert/bert-base-multilingual-uncased', num_labels=1)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model.model.to(device)
-
-    train_examples = [InputExample(texts=[sent1, sent2], label=float(label)) for (sent1, sent2), label in zip(X_train, y_train)]
-    val_examples = [InputExample(texts=[sent1, sent2], label=float(label)) for (sent1, sent2), label in zip(X_val, y_val)]
     
-    train_dataloader = DataLoader(train_examples, shuffle=True, batch_size=batch_size)
-    evaluator = CEBinaryClassificationEvaluator.from_input_examples(val_examples, name="validation")
-    warmup_steps = math.ceil(len(train_dataloader) * epochs * 0.1)
+    precision_modes = ["default", "mixed", "fp16", "bf16", "tf32"] if precision == "all" else [precision]
     
-    model.fit(
+    for prec in precision_modes:
+        print(f"Starting training with precision: {prec}")
+        
+        model = CrossEncoder('google-bert/bert-base-multilingual-uncased', num_labels=1)
+        
+        if torch.cuda.is_available():
+            device = torch.device(f"cuda:{torch.distributed.get_rank()}")
+        elif torch.backends.mps.is_available():
+            device = "mps"
+        elif torch.backends.hip.is_available():
+            device = "hip"
+        else:
+            device = "cpu"
+
+        model.model.to(device)
+        model = torch.nn.parallel.DistributedDataParallel(model.model, device_ids=[device])
+
+        # Set precision mode
+        if prec == "mixed":
+            model.module.to(torch.bfloat16)
+        elif prec == "fp16":
+            model.module.to(torch.float16)
+        elif prec == "bf16":
+            model.module.to(torch.bfloat16)
+        elif prec == "tf32":
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            print("Using TF32 precision")
+        
+        param_dtype = next(model.module.parameters()).dtype
+        print(f"Training is happening in precision: {param_dtype}")
+        
+        train_examples = [InputExample(texts=[sent1, sent2], label=label) for (sent1, sent2), label in zip(X_train, y_train)]
+        val_examples = [InputExample(texts=[sent1, sent2], label=label) for (sent1, sent2), label in zip(X_val, y_val)]
+        
+        train_sampler = DistributedSampler(train_examples)
+        train_dataloader = DataLoader(train_examples, batch_size=batch_size, sampler=train_sampler)
+        evaluator = CEBinaryClassificationEvaluator.from_input_examples(val_examples, name="validation")
+        
+        warmup_steps = math.ceil(len(train_dataloader) * epochs * 0.1)
+        start_time = time.time()
+        
+        for epoch in range(epochs):
+            print(f"Epoch {epoch+1}/{epochs}")
+            model.module.fit(
+                train_dataloader=train_dataloader,
+                evaluator=evaluator,
+                epochs=1,
+                warmup_steps=warmup_steps,
+                optimizer_params={'lr': learning_rate},
+                save_best_model=True,
+                output_path=(model_folder_name + f'_{prec}_best'),
+            )
+            
+            torch.nn.utils.clip_grad_norm_(model.module.parameters(), max_norm=1.0)
+            eval_score = evaluator(model.module)
+            print(f"Epoch {epoch+1} - Accuracy: {eval_score:.4f}")
+        
+        training_time = time.time() - start_time
+        model.module.save(model_folder_name + f'_{prec}')
+        print(f"Model saved at: {model_folder_name}_{prec}")
+        print(f"Training Time: {training_time:.2f} seconds")
+    
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Train a CrossEncoder model using a CSV dataset.",
+                                     epilog="Example usage: python script.py --csv dataset.csv --train fp16")
+    parser.add_argument("--train", type=str, choices=["default", "mixed", "fp16", "bf16", "tf32", "all"], default="default", help="Precision mode for training")
+    parser.add_argument("--csv", type=str, required=True, help="Path to the input CSV file")
+    args = parser.parse_args()
+    train_cross_encoder(args.csv, precision=args.train)
