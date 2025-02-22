@@ -1,0 +1,35 @@
+# Detect if AMD ROCm is available
+if torch.cuda.is_available():
+    device = "cuda"  # NVIDIA GPU with CUDA
+elif torch.backends.mps.is_available():
+    device = "mps"  # Apple Silicon M1/M2 GPUs
+elif torch.has_mps:  # For future MPS support
+    device = "mps"
+elif torch.cuda.device_count() > 1:
+    device = "cuda"  # Multi-GPU (NVIDIA)
+elif torch.backends.hip.is_available():
+    device = "hip"  # AMD GPU with ROCm
+else:
+    device = "cpu"  # Default to CPU
+
+# Load dataset
+file_path = args.csv
+df = pd.read_csv(file_path)
+
+# Shuffle dataset
+df = df.sample(frac=1, random_state=42).reset_index(drop=True)
+
+# Introduce slight noise/variation by modifying some translations
+def add_noise(text):
+    words = text.split()
+    if len(words) > 3:
+        idx = random.randint(0, len(words) - 1)
+        words[idx] = words[idx][::-1]  # Reverse a random word
+    return " ".join(words)
+
+df.iloc[:, 1] = df.iloc[:, 1].apply(add_noise)
+
+# Train-validation split
+train_size = int(0.8 * len(df))
+X_train, X_val = df.iloc[:train_size, 0], df.iloc[train_size:, 0]
+y_train, y_val = df.iloc[:train_size, 1], df.iloc[train_size:, 1]
