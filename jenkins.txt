@@ -1,0 +1,103 @@
+pipeline {
+    agent any
+    parameters {
+        string(name: 'PIPELINE_NUMBERS', defaultValue: '1,2', description: 'Enter pipeline numbers (e.g., 1,2,3)')
+        string(name: 'BUILD_VERSION', defaultValue: '1.0.0', description: 'Build Version (Used by Pipeline_A & Pipeline_B)')
+        booleanParam(name: 'DEPLOY_TO_PROD', defaultValue: false, description: 'Deploy to Production? (Used by Pipeline_B)')
+        choice(name: 'ENVIRONMENT', choices: ['DEV', 'STAGING', 'PROD'], description: 'Select Environment (Used by Pipeline_C)')
+        string(name: 'CUSTOM_PARAM', defaultValue: 'default_value', description: 'Custom parameter (Used by Pipeline_C)')
+    }
+    stages {
+        stage('Validate & Trigger Pipelines') {
+            steps {
+                script {
+                    // Define mapping of pipeline numbers to their respective pipelines and required parameters
+                    def pipelineMap = [
+                        '1': [name: 'Pipeline_A', params: ['BUILD_VERSION']],
+                        '2': [name: 'Pipeline_B', params: ['BUILD_VERSION', 'DEPLOY_TO_PROD']],
+                        '3': [name: 'Pipeline_C', params: ['ENVIRONMENT', 'CUSTOM_PARAM']]
+                    ]
+                    
+                    // Split input numbers into a list
+                    def selectedNumbers = params.PIPELINE_NUMBERS.tokenize(',')
+                    def triggeredPipelines = []
+
+                    selectedNumbers.each { num ->
+                        num = num.trim()  // Remove spaces
+                        if (pipelineMap.containsKey(num)) {
+                            def pipelineInfo = pipelineMap[num]
+                            def pipelineName = pipelineInfo.name
+                            def requiredParams = pipelineInfo.params
+                            
+                            // Collect only required parameters for this pipeline
+                            def paramList = requiredParams.collect { paramName ->
+                                return [name: paramName, value: params[paramName]]
+                            }
+
+                            echo "✅ Triggering ${pipelineName} with parameters: ${paramList}"
+                            
+                            // Trigger the pipeline with only relevant parameters
+                            build job: pipelineName, wait: false, parameters: paramList
+                            
+                            triggeredPipelines << pipelineName
+                        } else {
+                            echo "⚠️ Warning: Pipeline number ${num} is invalid and will be ignored!"
+                        }
+                    }
+
+                    if (triggeredPipelines.isEmpty()) {
+                        error("❌ No valid pipelines selected. Please enter valid pipeline numbers.")
+                    }
+                }
+            }
+        }
+    }
+}
+
+pipeline {
+    agent any
+    parameters {
+        string(name: 'BUILD_VERSION', defaultValue: '1.0.0', description: 'Build Version')
+    }
+    stages {
+        stage('Build') {
+            steps {
+                echo "🚀 Running ${env.JOB_NAME} with BUILD_VERSION=${params.BUILD_VERSION}"
+            }
+        }
+    }
+}
+
+pipeline {
+    agent any
+    parameters {
+        string(name: 'BUILD_VERSION', defaultValue: '1.0.0', description: 'Build Version')
+        booleanParam(name: 'DEPLOY_TO_PROD', defaultValue: false, description: 'Deploy to Production?')
+    }
+    stages {
+        stage('Deploy') {
+            steps {
+                echo "🚀 Running ${env.JOB_NAME} with:"
+                echo "   🔹 BUILD_VERSION = ${params.BUILD_VERSION}"
+                echo "   🔹 DEPLOY_TO_PROD = ${params.DEPLOY_TO_PROD}"
+            }
+        }
+    }
+}
+
+pipeline {
+    agent any
+    parameters {
+        choice(name: 'ENVIRONMENT', choices: ['DEV', 'STAGING', 'PROD'], description: 'Select Environment')
+        string(name: 'CUSTOM_PARAM', defaultValue: 'default_value', description: 'Custom parameter')
+    }
+    stages {
+        stage('Configuration') {
+            steps {
+                echo "🚀 Running ${env.JOB_NAME} with:"
+                echo "   🔹 ENVIRONMENT = ${params.ENVIRONMENT}"
+                echo "   🔹 CUSTOM_PARAM = ${params.CUSTOM_PARAM}"
+            }
+        }
+    }
+}
