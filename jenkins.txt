@@ -101,3 +101,164 @@ pipeline {
         }
     }
 }
+
+
+
+
+
+
+pipeline {
+    agent any
+    parameters {
+        string(name: 'PIPELINE_CODES', defaultValue: '2a,3a1', description: 'Enter pipeline codes (e.g., 2a1, 2a2, 3a)')
+        string(name: 'BUILD_VERSION', defaultValue: '1.0.0', description: 'Build Version (Used by 2a1, 2a2)')
+        booleanParam(name: 'DEPLOY_TO_PROD', defaultValue: false, description: 'Deploy to Production? (Used by 2a3)')
+        choice(name: 'ENVIRONMENT', choices: ['DEV', 'STAGING', 'PROD'], description: 'Select Environment (Used by 3a1, 3a2, 3a3)')
+        string(name: 'CUSTOM_PARAM', defaultValue: 'default_value', description: 'Custom parameter (Used by 3a2)')
+    }
+    stages {
+        stage('Validate & Trigger Pipelines') {
+            steps {
+                script {
+                    // Define available pipelines with required parameters
+                    def pipelineMap = [
+                        '2a1': [name: 'Pipeline_2a1', params: ['BUILD_VERSION']],
+                        '2a2': [name: 'Pipeline_2a2', params: ['BUILD_VERSION']],
+                        '2a3': [name: 'Pipeline_2a3', params: ['DEPLOY_TO_PROD']],
+                        '3a1': [name: 'Pipeline_3a1', params: ['ENVIRONMENT']],
+                        '3a2': [name: 'Pipeline_3a2', params: ['ENVIRONMENT', 'CUSTOM_PARAM']],
+                        '3a3': [name: 'Pipeline_3a3', params: ['ENVIRONMENT']]
+                    ]
+
+                    // Extract selected pipeline codes
+                    def selectedCodes = params.PIPELINE_CODES.tokenize(',')
+                    def pipelinesToRun = []
+                    def invalidCodes = []
+
+                    selectedCodes.each { code ->
+                        code = code.trim()
+
+                        if (pipelineMap.containsKey(code)) {
+                            // Direct match (e.g., "2a1")
+                            pipelinesToRun << code
+                        } else {
+                            // Prefix match (e.g., "2a" → Run all "2a1", "2a2", "2a3")
+                            def matchingPipelines = pipelineMap.keySet().findAll { it.startsWith(code) }
+
+                            if (matchingPipelines) {
+                                pipelinesToRun.addAll(matchingPipelines)
+                            } else {
+                                invalidCodes << code  // Store invalid pipeline codes
+                            }
+                        }
+                    }
+
+                    // Remove duplicates
+                    pipelinesToRun = pipelinesToRun.toUnique()
+
+                    if (invalidCodes) {
+                        echo "⚠️ Warning: The following pipeline codes are invalid and will be skipped: ${invalidCodes.join(', ')}"
+                    }
+
+                    if (pipelinesToRun.isEmpty()) {
+                        error("❌ No valid pipelines selected. Please enter valid pipeline codes.")
+                    }
+
+                    // Trigger each selected pipeline
+                    pipelinesToRun.each { pipelineCode ->
+                        def pipelineInfo = pipelineMap[pipelineCode]
+                        def pipelineName = pipelineInfo.name
+                        def requiredParams = pipelineInfo.params
+
+                        // Collect only relevant parameters for the pipeline
+                        def paramList = requiredParams.collect { paramName ->
+                            return [name: paramName, value: params[paramName]]
+                        }
+
+                        echo "✅ Triggering ${pipelineName} with parameters: ${paramList}"
+                        
+                        build job: pipelineName, wait: false, parameters: paramList
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
+
+pipeline {
+    agent any
+    parameters {
+        string(name: 'PIPELINE_CODES', defaultValue: '2a,3a1', description: 'Enter pipeline codes (e.g., 2a1, 2a2, 3a)')
+        string(name: 'BUILD_VERSION', defaultValue: '1.0.0', description: 'Build Version (Used by 2a1, 2a2)')
+        booleanParam(name: 'DEPLOY_TO_PROD', defaultValue: false, description: 'Deploy to Production? (Used by 2a3)')
+        choice(name: 'ENVIRONMENT', choices: ['DEV', 'STAGING', 'PROD'], description: 'Select Environment (Used by 3a1, 3a2, 3a3)')
+        string(name: 'CUSTOM_PARAM', defaultValue: 'default_value', description: 'Custom parameter (Used by 3a2)')
+    }
+    stages {
+        stage('Validate & Trigger Pipelines') {
+            steps {
+                script {
+                    // Define available pipelines with required parameters
+                    def pipelineMap = [
+                        '2a1': [name: 'Pipeline_2a1', params: ['BUILD_VERSION']],
+                        '2a2': [name: 'Pipeline_2a2', params: ['BUILD_VERSION']],
+                        '2a3': [name: 'Pipeline_2a3', params: ['DEPLOY_TO_PROD']],
+                        '3a1': [name: 'Pipeline_3a1', params: ['ENVIRONMENT']],
+                        '3a2': [name: 'Pipeline_3a2', params: ['ENVIRONMENT', 'CUSTOM_PARAM']],
+                        '3a3': [name: 'Pipeline_3a3', params: ['ENVIRONMENT']]
+                    ]
+
+                    // Extract selected pipeline codes (keep duplicates)
+                    def selectedCodes = params.PIPELINE_CODES.tokenize(',')
+                    def pipelinesToRun = []
+                    def invalidCodes = []
+
+                    selectedCodes.each { code ->
+                        code = code.trim()
+
+                        if (pipelineMap.containsKey(code)) {
+                            // Direct match (e.g., "2a1")
+                            pipelinesToRun << code
+                        } else {
+                            // Prefix match (e.g., "2a" → Run all "2a1", "2a2", "2a3")
+                            def matchingPipelines = pipelineMap.keySet().findAll { it.startsWith(code) }
+
+                            if (matchingPipelines) {
+                                pipelinesToRun.addAll(matchingPipelines)
+                            } else {
+                                invalidCodes << code  // Store invalid pipeline codes
+                            }
+                        }
+                    }
+
+                    if (invalidCodes) {
+                        echo "⚠️ Warning: The following pipeline codes are invalid and will be skipped: ${invalidCodes.join(', ')}"
+                    }
+
+                    if (pipelinesToRun.isEmpty()) {
+                        error("❌ No valid pipelines selected. Please enter valid pipeline codes.")
+                    }
+
+                    // Trigger each selected pipeline (allowing duplicates)
+                    pipelinesToRun.each { pipelineCode ->
+                        def pipelineInfo = pipelineMap[pipelineCode]
+                        def pipelineName = pipelineInfo.name
+                        def requiredParams = pipelineInfo.params
+
+                        // Collect only relevant parameters for the pipeline
+                        def paramList = requiredParams.collect { paramName ->
+                            return [name: paramName, value: params[paramName]]
+                        }
+
+                        echo "✅ Triggering ${pipelineName} with parameters: ${paramList}"
+                        
+                        build job: pipelineName, wait: false, parameters: paramList
+                    }
+                }
+            }
+        }
+    }
+}
