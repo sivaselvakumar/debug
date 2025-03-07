@@ -1,0 +1,72 @@
+pipeline {
+    agent any
+    parameters {
+        dynamicReference(name: 'CATEGORY', description: 'Select categories to auto-fill pipeline codes')
+        dynamicReference(name: 'PIPELINE_CODES', description: 'Auto-filled based on selected categories')
+        string(name: 'BUILD_VERSION', defaultValue: '', description: 'Build Version (Used by 2a1, 2a2)')
+        booleanParam(name: 'DEPLOY_TO_PROD', defaultValue: false, description: 'Deploy to Production? (Used by 2a3)')
+        choice(name: 'ENVIRONMENT', choices: ['Select', 'DEV', 'STAGING', 'PROD'], description: 'Select Environment (Used by 3a1, 3a2, 3a3)')
+        string(name: 'CUSTOM_PARAM', defaultValue: '', description: 'Custom parameter (Used by 3a2)')
+    }
+    stages {
+        stage('Validate & Trigger Pipelines') {
+            steps {
+                script {
+                    // Define available pipelines and their required parameters
+                    def pipelineMap = [
+                        '2a1': [name: 'Pipeline_2a1', params: ['BUILD_VERSION']],
+                        '2a2': [name: 'Pipeline_2a2', params: ['BUILD_VERSION']],
+                        '2a3': [name: 'Pipeline_2a3', params: ['DEPLOY_TO_PROD']],
+                        '3a1': [name: 'Pipeline_3a1', params: ['ENVIRONMENT']],
+                        '3a2': [name: 'Pipeline_3a2', params: ['ENVIRONMENT', 'CUSTOM_PARAM']],
+                        '3a3': [name: 'Pipeline_3a3', params: ['ENVIRONMENT']]
+                    ]
+
+                    def selectedPipelines = params.PIPELINE_CODES.tokenize(',')
+                    def invalidPipelines = []
+                    def missingParams = []
+
+                    if (selectedPipelines.isEmpty()) {
+                        error("❌ No pipelines selected. Please select at least one.")
+                    }
+
+                    // Validate input parameters for each selected pipeline
+                    selectedPipelines.each { pipelineCode ->
+                        def pipelineInfo = pipelineMap[pipelineCode]
+                        if (!pipelineInfo) {
+                            invalidPipelines << pipelineCode
+                            return
+                        }
+
+                        // Check if required parameters are filled
+                        pipelineInfo.params.each { param ->
+                            if (!params[param] || params[param] == "Select") {
+                                missingParams << "⚠️ Missing parameter '${param}' for pipeline '${pipelineCode}'"
+                            }
+                        }
+                    }
+
+                    // Handle errors before proceeding
+                    if (invalidPipelines) {
+                        error("❌ Invalid pipeline codes: ${invalidPipelines.join(', ')}")
+                    }
+                    if (missingParams) {
+                        error("❌ Missing required parameters:\n${missingParams.join('\n')}")
+                    }
+
+                    // Trigger valid pipelines
+                    selectedPipelines.each { pipelineCode ->
+                        def pipelineInfo = pipelineMap[pipelineCode]
+                        def pipelineName = pipelineInfo.name
+                        def paramList = pipelineInfo.params.collect { paramName ->
+                            return [name: paramName, value: params[paramName]]
+                        }
+
+                        echo "✅ Triggering ${pipelineName} with parameters: ${paramList}"
+                        build job: pipelineName, wait: false, parameters: paramList
+                    }
+                }
+            }
+        }
+    }
+}
