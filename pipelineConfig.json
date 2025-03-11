@@ -1,0 +1,10 @@
+{
+  "2a1": { "name": "Pipeline_2a1", "params": ["BUILD_VERSION"] },
+  "2a2": { "name": "Pipeline_2a2", "params": ["BUILD_VERSION"] },
+  "2a3": { "name": "Pipeline_2a3", "params": ["DEPLOY_TO_PROD"] },
+  "3a1": { "name": "Pipeline_3a1", "params": ["ENVIRONMENT"] },
+  "3a2": { "name": "Pipeline_3a2", "params": ["ENVIRONMENT", "CUSTOM_PARAM"] },
+  "3a3": { "name": "Pipeline_3a3", "params": ["ENVIRONMENT"] },
+  "4a1": { "name": "Pipeline_4a1", "params": ["BUILD_VERSION"] },
+  "4a2": { "name": "Pipeline_4a2", "params": ["DEPLOY_TO_PROD"] }
+}
