@@ -25,8 +25,11 @@ pipeline {
             steps {
                 script {
                     def pipelineMap = new groovy.json.JsonSlurper().parseText(env.PIPELINE_MAP)
-                    def selectedPipelines = params.PIPELINE_CODES.tokenize(',')
-                    def missingParams = []
+                    
+                    // Convert space-separated input into a list
+                    def selectedPipelines = params.PIPELINE_CODES.tokenize(' ')
+                    def skippedPipelines = []
+                    def triggeredPipelines = []
 
                     if (selectedPipelines.isEmpty()) {
                         error("❌ No pipelines selected. Please select at least one.")
@@ -35,29 +38,35 @@ pipeline {
                     selectedPipelines.each { pipelineCode ->
                         def pipelineInfo = pipelineMap[pipelineCode]
                         if (!pipelineInfo) {
-                            error("❌ Invalid pipeline code: ${pipelineCode}")
+                            echo "⚠️ Skipping invalid pipeline: ${pipelineCode}"
+                            skippedPipelines << pipelineCode
+                            return
                         }
 
-                        // Check required parameters
-                        pipelineInfo.params.each { param ->
-                            if (!params[param] || params[param] == "Select") {
-                                missingParams << "⚠️ Missing '${param}' for pipeline '${pipelineCode}'"
+                        def missingParams = pipelineInfo.params.findAll { param ->
+                            !params[param] || params[param] == "Select"
+                        }
+
+                        if (!missingParams.isEmpty()) {
+                            echo "⚠️ Skipping ${pipelineCode} due to missing parameters: ${missingParams.join(', ')}"
+                            skippedPipelines << pipelineCode
+                        } else {
+                            def paramList = pipelineInfo.params.collect { paramName ->
+                                return [name: paramName, value: params[paramName]]
                             }
+
+                            echo "✅ Triggering ${pipelineInfo.name} with parameters: ${paramList}"
+                            build job: pipelineInfo.name, wait: false, parameters: paramList
+                            triggeredPipelines << pipelineCode
                         }
                     }
 
-                    if (missingParams) {
-                        error("❌ Missing required parameters:\n${missingParams.join('\n')}")
+                    // Summary logs
+                    if (!skippedPipelines.isEmpty()) {
+                        echo "⚠️ Skipped Pipelines: ${skippedPipelines.join(', ')}"
                     }
-
-                    selectedPipelines.each { pipelineCode ->
-                        def pipelineInfo = pipelineMap[pipelineCode]
-                        def paramList = pipelineInfo.params.collect { paramName ->
-                            return [name: paramName, value: params[paramName]]
-                        }
-
-                        echo "✅ Triggering ${pipelineInfo.name} with parameters: ${paramList}"
-                        build job: pipelineInfo.name, wait: false, parameters: paramList
+                    if (!triggeredPipelines.isEmpty()) {
+                        echo "✅ Successfully Triggered Pipelines: ${triggeredPipelines.join(', ')}"
                     }
                 }
             }
